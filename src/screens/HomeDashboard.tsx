@@ -40,24 +40,57 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     if (profile) {
       loadRecentSessions(profile.id);
       loadInsights(profile.id);
+    }
+  }, [profile, loadRecentSessions, loadInsights]);
+
+  useEffect(() => {
+    if (recentSessions.length > 0) {
       calculateStats();
     }
-  }, [profile]);
+  }, [recentSessions]);
 
-  const calculateStats = () => {
+  const calculateStats = React.useCallback(() => {
     if (recentSessions.length > 0) {
       const completed = recentSessions.filter(s => s.endAt && s.durationMin);
+      if (completed.length === 0) {
+        setStats({
+          averageDuration: 0,
+          averageScore: 0,
+          totalSessions: 0,
+          consistency: 0,
+        });
+        return;
+      }
+      
       const avgDuration = completed.reduce((sum, s) => sum + (s.durationMin || 0), 0) / completed.length;
       const avgScore = completed.reduce((sum, s) => sum + (s.sleepScore || 0), 0) / completed.length;
+      
+      // Calculate consistency (bedtime variance)
+      const bedtimes = completed.map(s => {
+        const date = new Date(s.startAt);
+        return date.getHours() * 60 + date.getMinutes(); // minutes from midnight
+      });
+      const avgBedtime = bedtimes.reduce((sum, t) => sum + t, 0) / bedtimes.length;
+      const variance = bedtimes.reduce((sum, t) => sum + Math.pow(t - avgBedtime, 2), 0) / bedtimes.length;
+      const stdDev = Math.sqrt(variance);
+      // Consistency: 100% if stdDev < 30min, decreases as variance increases
+      const consistency = Math.max(0, Math.min(100, 100 - (stdDev / 30) * 20));
       
       setStats({
         averageDuration: Math.round(avgDuration),
         averageScore: Math.round(avgScore),
         totalSessions: completed.length,
-        consistency: 85, // Placeholder
+        consistency: Math.round(consistency),
+      });
+    } else {
+      setStats({
+        averageDuration: 0,
+        averageScore: 0,
+        totalSessions: 0,
+        consistency: 0,
       });
     }
-  };
+  }, [recentSessions]);
 
   if (!profile) {
     return <LoadingSpinner text="Loading your sleep data..." />;

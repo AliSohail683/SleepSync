@@ -4,8 +4,8 @@
  */
 
 import { create } from 'zustand';
-import { SleepSession, UUID, SleepInsight } from '@/models';
-import { sleepService } from '@/services/sleepService';
+import { SleepSession, UUID, SleepInsight } from '../models';
+import { sleepService } from '../services/sleepService';
 
 interface SleepState {
   currentSession: SleepSession | null;

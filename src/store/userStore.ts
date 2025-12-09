@@ -17,8 +17,8 @@ interface UserState {
   loadProfile: (userId: UUID) => Promise<void>;
   createProfile: (data: Partial<UserProfile>) => Promise<UserProfile>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
-  setOnboardingComplete: (complete: boolean) => void;
-  logout: () => void;
+  setOnboardingComplete: (complete: boolean) => Promise<void>;
+  logout: () => Promise<void>;
 }
 
 export const useUserStore = create<UserState>((set, get) => ({
@@ -39,8 +39,15 @@ export const useUserStore = create<UserState>((set, get) => ({
   },
 
   createProfile: async (data: Partial<UserProfile>) => {
+    // Get or create user ID
+    let userId = await storageService.getStoredUserId();
+    if (!userId) {
+      userId = uuidv4();
+      await storageService.setStoredUserId(userId);
+    }
+
     const profile: UserProfile = {
-      id: uuidv4(),
+      id: userId,
       ageRange: data.ageRange || null,
       gender: data.gender,
       sleepGoalHours: data.sleepGoalHours || 8,
@@ -68,11 +75,15 @@ export const useUserStore = create<UserState>((set, get) => ({
     set({ profile: updatedProfile });
   },
 
-  setOnboardingComplete: (complete: boolean) => {
+  setOnboardingComplete: async (complete: boolean) => {
+    // Persist to storage
+    await storageService.setOnboardingComplete(complete);
     set({ isOnboardingComplete: complete });
   },
 
-  logout: () => {
+  logout: async () => {
+    await storageService.clearStoredUserId();
+    await storageService.clearOnboardingComplete();
     set({ profile: null, isOnboardingComplete: false });
   },
 }));

@@ -88,9 +88,8 @@ class SoundService {
       // Example: const sound = new Sound('rain.mp3', Sound.MAIN_BUNDLE);
       
       return new Promise<PlaybackControls>((resolve, reject) => {
-        // For demo purposes, we'll create a mock sound object
-        // In production, replace with actual sound file path
-        const soundUri = this.getMockSoundUri(profile.baseType);
+        // Get sound file path (must be in app bundle or remote URL)
+        const soundUri = this.getSoundUri(profile.baseType);
         const sound = new Sound(soundUri, Sound.MAIN_BUNDLE, (error) => {
           if (error) {
             console.error('❌ Failed to load sound:', error);
@@ -221,14 +220,16 @@ class SoundService {
 
 
   /**
-   * Get mock sound URI (in production, use actual audio files)
+   * Get sound file URI
+   * Returns path to audio file in app bundle or remote URL
+   * NOTE: Audio files must be added to the app bundle (ios/SleepSync/ or android/app/src/main/res/raw/)
    */
-  private getMockSoundUri(type: string): string {
-    // In production, return actual file paths
-    // For react-native-sound, use relative paths like 'rain.mp3' for bundled assets
-    // or full paths for remote URLs
-    // For now, return a placeholder that will need to be replaced with actual files
-    return `${type}.mp3`; // This should be in your assets folder
+  private getSoundUri(type: string): string {
+    // For react-native-sound, use relative paths for bundled assets
+    // Example: 'rain.mp3' for files in ios/SleepSync/ or android/app/src/main/res/raw/
+    // Or use full URLs for remote audio files
+    // TODO: Add actual audio files to app bundle and update paths here
+    return `${type}.mp3`; // Must exist in app bundle
   }
 
   /**

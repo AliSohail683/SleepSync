@@ -4,14 +4,18 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import { SleepSession, UUID } from '@/models';
+import { SleepSession, UUID } from '../models';
 import { storageService } from './storageService';
 import {
   calculateSleepScore,
   estimateSleepStages,
   generateInsights,
 } from '../utils/sleepUtils';
-import { getDurationInMinutes } from '@/utils/dateUtils';
+import { sleepScorer } from '../engines/sleepScore/SleepScorer';
+import { insightsGenerator } from '../engines/insights/InsightsGenerator';
+import { SleepSessionEnhanced } from '../types/sleep';
+import { getDurationInMinutes } from '../utils/dateUtils';
+import { backgroundTrackingService } from '../system/background/BackgroundTrackingService';
 
 class SleepService {
   /**
@@ -25,6 +29,15 @@ class SleepService {
     };
 
     await storageService.createSleepSession(session);
+    
+    // Start background tracking
+    try {
+      await backgroundTrackingService.startTracking(session.id, userId);
+    } catch (error) {
+      console.warn('Failed to start background tracking:', error);
+      // Don't fail session creation if background tracking fails
+    }
+    
     console.log('✅ Sleep session started:', session.id);
     
     return session;
@@ -47,6 +60,11 @@ class SleepService {
     const endAt = new Date().toISOString();
     const durationMin = getDurationInMinutes(session.startAt, endAt);
 
+    // Ensure duration is calculated and valid
+    if (!durationMin || durationMin <= 0) {
+      throw new Error('Invalid session duration. Session must be at least 1 minute long.');
+    }
+
     await storageService.updateSleepSession(sessionId, {
       endAt,
       durationMin,
@@ -57,8 +75,36 @@ class SleepService {
       throw new Error('Failed to retrieve updated session');
     }
 
+    // Ensure updatedSession has durationMin before evaluation
+    if (!updatedSession.durationMin) {
+      // If durationMin wasn't saved, set it directly on the session object
+      updatedSession.durationMin = durationMin;
+    }
+
     // Evaluate the session to fill in stages and score
     const evaluatedSession = await this.evaluateSession(updatedSession);
+    
+    // Calculate enhanced sleep score using new engine
+    try {
+      const scoreBreakdown = await sleepScorer.calculateScore(
+        evaluatedSession as SleepSessionEnhanced,
+        evaluatedSession.userId
+      );
+      
+      // Update session with enhanced score
+      await storageService.updateSleepSession(sessionId, {
+        sleepScore: scoreBreakdown.total,
+      });
+    } catch (error) {
+      console.error('Failed to calculate enhanced sleep score:', error);
+    }
+    
+    // Stop background tracking
+    try {
+      await backgroundTrackingService.stopTracking();
+    } catch (error) {
+      console.warn('Failed to stop background tracking:', error);
+    }
     
     console.log('✅ Sleep session ended:', sessionId);
     return evaluatedSession;
@@ -73,8 +119,17 @@ class SleepService {
       throw new Error('Cannot evaluate session without duration');
     }
 
-    // Estimate sleep stages using our simulation algorithm
-    const stages = estimateSleepStages(session.durationMin);
+    // Get sleep stages from sleep detection engine (real sensor data)
+    // Fallback to estimation only if no real data available
+    let stages;
+    if (session.stages) {
+      // Use real stages from detection engine
+      stages = session.stages;
+    } else {
+      // Fallback estimation (should rarely be needed if sensors are working)
+      console.warn('⚠️ No real stage data available, using fallback estimation');
+      stages = estimateSleepStages(session.durationMin);
+    }
 
     // Get user profile for sleep score calculation
     const userProfile = await storageService.getUserProfile(session.userId);
@@ -84,9 +139,10 @@ class SleepService {
     // Calculate sleep score
     const sleepScore = calculateSleepScore(session, sleepGoalHours, caffeineHabits);
 
-    // Simulate awake count and sleep latency based on sleep quality
-    const awakeCount = sleepScore > 80 ? Math.floor(Math.random() * 2) : Math.floor(Math.random() * 5) + 2;
-    const sleepLatency = sleepScore > 80 ? Math.floor(Math.random() * 15) + 5 : Math.floor(Math.random() * 30) + 20;
+    // Calculate awake count and sleep latency from actual session data
+    // These should come from the sleep detection engine analysis
+    const awakeCount = session.awakeCount || 0;
+    const sleepLatency = session.sleepLatency || 0;
 
     // Update session with evaluation results
     await storageService.updateSleepSession(session.id, {
@@ -132,6 +188,16 @@ class SleepService {
   async getActiveSession(userId: UUID): Promise<SleepSession | null> {
     const recentSessions = await storageService.getRecentSessions(userId, 5);
     const activeSession = recentSessions.find((session) => !session.endAt);
+    
+    // If active session found, recover background tracking
+    if (activeSession) {
+      try {
+        await backgroundTrackingService.recoverTracking(activeSession);
+      } catch (error) {
+        console.warn('Failed to recover background tracking:', error);
+      }
+    }
+    
     return activeSession || null;
   }
 

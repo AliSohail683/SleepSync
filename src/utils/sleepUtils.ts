@@ -57,7 +57,8 @@ export const calculateSleepScore = (
 
 /**
  * Estimate sleep stages based on duration
- * This is a simulated algorithm - in production, this would use actual sensor data
+ * FALLBACK ONLY: Used when real sensor data is unavailable
+ * Real stages come from Sleep Detection Engine using actual sensor data
  */
 export const estimateSleepStages = (durationMin: number): {
   light: number;
@@ -66,16 +67,14 @@ export const estimateSleepStages = (durationMin: number): {
 } => {
   const hours = durationMin / 60;
   
-  // Apply some random jitter for realism
-  const jitter = () => (Math.random() - 0.5) * 0.1;
+  // Statistical averages based on typical sleep patterns
+  // Deep sleep: ~20% of total
+  const deep = hours * 0.20;
   
-  // Deep sleep: ~20% of total (±5%)
-  const deep = hours * (0.20 + jitter());
+  // REM: ~25% of total
+  const rem = hours * 0.25;
   
-  // REM: ~25% of total (±5%)
-  const rem = hours * (0.25 + jitter());
-  
-  // Light: remainder
+  // Light: remainder (~55%)
   const light = hours - deep - rem;
   
   return {

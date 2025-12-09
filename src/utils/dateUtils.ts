@@ -66,3 +66,48 @@ export const getDayOfWeek = (date: Date | string): number => {
   return d.getDay();
 };
 
+/**
+ * Get timezone-safe date string (ISO format)
+ */
+export const getTimezoneSafeDate = (date?: Date): string => {
+  const d = date || new Date();
+  return d.toISOString();
+};
+
+/**
+ * Get local timezone offset in minutes
+ */
+export const getTimezoneOffset = (): number => {
+  return new Date().getTimezoneOffset();
+};
+
+/**
+ * Convert UTC time to local time string
+ */
+export const utcToLocal = (utcString: string): string => {
+  const date = parseISO(utcString);
+  return format(date, 'yyyy-MM-dd HH:mm:ss');
+};
+
+/**
+ * Get start of day in local timezone
+ */
+export const getStartOfDayLocal = (date?: Date): Date => {
+  const d = date || new Date();
+  const year = d.getFullYear();
+  const month = d.getMonth();
+  const day = d.getDate();
+  return new Date(year, month, day, 0, 0, 0, 0);
+};
+
+/**
+ * Get end of day in local timezone
+ */
+export const getEndOfDayLocal = (date?: Date): Date => {
+  const d = date || new Date();
+  const year = d.getFullYear();
+  const month = d.getMonth();
+  const day = d.getDate();
+  return new Date(year, month, day, 23, 59, 59, 999);
+};
+

@@ -31,7 +31,7 @@ export default function App() {
   return (
     <GestureHandlerRootView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0A0E27" />
-      <NavigationContainer>
+      <NavigationContainer key={isOnboardingComplete ? 'main' : 'onboarding'}>
         <Stack.Navigator
           screenOptions={{
             headerShown: false,
@@ -56,7 +56,12 @@ export default function App() {
 
 // Screen Wrappers with navigation props
 const OnboardingFlowScreen = ({ navigation }: any) => (
-  <OnboardingFlow onComplete={() => navigation.replace('Home')} />
+  <OnboardingFlow 
+    onComplete={() => {
+      // Navigation will be handled by NavigationContainer remount
+      // when isOnboardingComplete changes to true
+    }} 
+  />
 );
 
 const HomeDashboardScreen = ({ navigation }: any) => (

@@ -35,7 +35,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ onComplete }) =>
     try {
       // Create user profile with collected data
       await createProfile(formData);
-      setOnboardingComplete(true);
+      await setOnboardingComplete(true);
       onComplete();
     } catch (error) {
       console.error('Failed to complete onboarding:', error);

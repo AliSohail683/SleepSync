@@ -78,14 +78,22 @@ export const Button: React.FC<ButtonProps> = ({
     return (
       <TouchableOpacity onPress={onPress} disabled={isDisabled} activeOpacity={0.8}>
         <LinearGradient
-          colors={colors.gradients.primaryButton}
+          colors={[...colors.gradients.primaryButton]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={buttonStyle}
+          style={{
+
+            width: "100%",
+            height: 48,
+            borderRadius: 12,
+             alignItems: 'center', justifyContent: 'center',
+
+          }}
+        // style={buttonStyle}
         >
           {buttonContent}
         </LinearGradient>
-      </TouchableOpacity>
+      </TouchableOpacity >
     );
   }
 
@@ -94,7 +102,7 @@ export const Button: React.FC<ButtonProps> = ({
       onPress={onPress}
       disabled={isDisabled}
       activeOpacity={0.8}
-      style={buttonStyle}
+    // style={buttonStyle}
     >
       {buttonContent}
     </TouchableOpacity>

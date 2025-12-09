@@ -6,8 +6,11 @@
 import { useEffect, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import storageService from '../services/storageService';
+import { database } from '../storage/sqlite/database';
 import { useSubscriptionStore } from '../store/subscriptionStore';
 import { useUserStore } from '../store/userStore';
+import { backgroundTrackingService } from '../system/background/BackgroundTrackingService';
+import { sleepService } from '../services/sleepService';
 
 export const useInitializeApp = () => {
   const [isReady, setIsReady] = useState(false);
@@ -19,23 +22,69 @@ export const useInitializeApp = () => {
   useEffect(() => {
     const initialize = async () => {
       try {
-        // Initialize database
+        // Initialize enhanced database
+        await database.initialize();
+        // Also initialize legacy storage service for backward compatibility
         await storageService.setupDB();
 
-        // Try to load existing user profile
-        // In a real app, you'd have proper user ID management
-        const userId = uuidv4(); // For demo, generate new ID each time
+        // Get or create persistent user ID
+        // Check if user ID exists in storage
+        let userId = await storageService.getStoredUserId();
         
-        try {
-          await loadProfile(userId);
-          setOnboardingComplete(true);
-        } catch {
-          // No profile exists, user needs to onboard
-          setOnboardingComplete(false);
+        // Check onboarding completion status from storage
+        const onboardingComplete = await storageService.getOnboardingComplete();
+        
+        if (!userId) {
+          // First time user - generate and store ID
+          userId = uuidv4();
+          await storageService.setStoredUserId(userId);
+          // New user - show onboarding
+          await setOnboardingComplete(false);
+        } else {
+          // Existing user - check onboarding status and profile
+          if (onboardingComplete) {
+            // Onboarding was completed - try to load profile
+            try {
+              await loadProfile(userId);
+              // Profile found - confirm onboarding complete
+              await setOnboardingComplete(true);
+            } catch {
+              // Profile missing but onboarding was complete - might be corrupted
+              // Reset onboarding to allow user to recreate profile
+              console.warn('Profile missing but onboarding was complete, resetting onboarding');
+              await setOnboardingComplete(false);
+            }
+          } else {
+            // Onboarding not complete - check if profile exists anyway
+            try {
+              await loadProfile(userId);
+              // Profile exists but onboarding not marked complete - mark it now
+              await setOnboardingComplete(true);
+            } catch {
+              // No profile - show onboarding
+              await setOnboardingComplete(false);
+            }
+          }
         }
 
         // Initialize subscription service
         await initializeSubscription();
+
+        // Initialize background tracking
+        try {
+          await backgroundTrackingService.initialize();
+          
+          // Check for active sessions and recover tracking
+          if (userId) {
+            const activeSession = await sleepService.getActiveSession(userId);
+            if (activeSession) {
+              console.log('🔄 Found active session, recovering tracking:', activeSession.id);
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to initialize background tracking:', error);
+          // Don't block app initialization
+        }
 
         setIsReady(true);
       } catch (err) {
@@ -46,7 +95,7 @@ export const useInitializeApp = () => {
     };
 
     initialize();
-  }, []);
+  }, [loadProfile, setOnboardingComplete, initializeSubscription]);
 
   return { isReady, error, hasProfile: !!profile };
 };

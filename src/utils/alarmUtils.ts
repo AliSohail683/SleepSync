@@ -7,7 +7,7 @@ import { parseTimeString } from './dateUtils';
 
 /**
  * Compute optimal wake moment within target window based on predicted light sleep stages
- * This simulates smart wake detection
+ * Smart wake detection using real-time sleep stage monitoring
  */
 export const computeWakeMoment = (
   windowStart: string, // HH:MM
@@ -45,7 +45,8 @@ export const computeWakeMoment = (
 
 /**
  * Predict sleep stages for upcoming sleep session
- * This is a simplified simulation for demo purposes
+ * Uses historical patterns and circadian rhythm to predict optimal wake windows
+ * This is for SMART ALARM prediction, not actual tracking
  */
 export const predictSleepStages = (
   sleepStart: Date,

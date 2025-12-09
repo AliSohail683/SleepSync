@@ -33,6 +33,14 @@
 	</dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string></string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>We need microphone access to detect snoring and sleep disturbances during your sleep session.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>We need motion data to track your sleep patterns and detect movement during sleep.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>We need to read your sleep data from Health to provide better insights.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>We need to save your sleep data to Health so it syncs with other health apps.</string>
 	<key>RCTNewArchEnabled</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
@@ -49,5 +57,15 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<false/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
+		<string>fetch</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.sleepsync.background-processing</string>
+		<string>com.sleepsync.background-fetch</string>
+	</array>
 </dict>
 </plist>

@@ -12,7 +12,8 @@ import {
   SubscriptionStatus,
   SleepDebtRecord,
   UUID,
-} from '@/models';
+} from '../models';
+import { mmkvStorage } from '../storage/mmkv/storage';
 
 const DB_NAME = 'sleepsync.db';
 
@@ -636,6 +637,49 @@ class StorageService {
     await db.executeSql('DELETE FROM sleep_debt_record');
     await db.executeSql('DELETE FROM user_profile');
     await db.executeSql('DELETE FROM subscription_status');
+  }
+
+  /**
+   * Get stored user ID from persistent storage
+   */
+  async getStoredUserId(): Promise<UUID | null> {
+    const userId = mmkvStorage.getString('user_id');
+    return userId || null;
+  }
+
+  /**
+   * Store user ID in persistent storage
+   */
+  async setStoredUserId(userId: UUID): Promise<void> {
+    mmkvStorage.setString('user_id', userId);
+  }
+
+  /**
+   * Clear stored user ID (for logout)
+   */
+  async clearStoredUserId(): Promise<void> {
+    mmkvStorage.removePreference('user_id');
+  }
+
+  /**
+   * Get onboarding completion status
+   */
+  async getOnboardingComplete(): Promise<boolean> {
+    return mmkvStorage.getBoolean('onboarding_complete') ?? false;
+  }
+
+  /**
+   * Set onboarding completion status
+   */
+  async setOnboardingComplete(complete: boolean): Promise<void> {
+    mmkvStorage.setBoolean('onboarding_complete', complete);
+  }
+
+  /**
+   * Clear onboarding completion status (for logout)
+   */
+  async clearOnboardingComplete(): Promise<void> {
+    mmkvStorage.removePreference('onboarding_complete');
   }
 }
 
