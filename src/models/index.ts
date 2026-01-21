@@ -12,6 +12,12 @@ export interface UserProfile {
   sleepGoalHours: number; // default 8
   averageBedtime: string | null; // HH:MM
   averageWakeTime: string | null; // HH:MM
+  // Optional richer pattern data (not all persisted to DB yet)
+  weekdayBedtime?: string | null;
+  weekdayWakeTime?: string | null;
+  weekendBedtime?: string | null;
+  weekendWakeTime?: string | null;
+  performanceGoals?: string[]; // e.g. ['work_study', 'sport']
   caffeineHabits: 'none' | 'low' | 'moderate' | 'high';
   screenBeforeBed: boolean;
   roomTemperaturePrefC?: number | null;

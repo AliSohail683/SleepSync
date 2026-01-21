@@ -15,6 +15,8 @@ interface PreferencesProps {
     screenBeforeBed: boolean;
     noiseSensitivity: string;
     roomTemperaturePrefC?: number;
+    recentSleepHours?: number[];
+    fatigueLevel?: number;
   }) => void;
   onBack: () => void;
 }
@@ -24,6 +26,8 @@ export const Preferences: React.FC<PreferencesProps> = ({ onNext, onBack }) => {
   const [screenTime, setScreenTime] = useState(false);
   const [noise, setNoise] = useState('medium');
   const [temp, setTemp] = useState<number | undefined>(18);
+  const [recentNights, setRecentNights] = useState<number[]>([6, 6, 6]);
+  const [fatigue, setFatigue] = useState<number>(3);
 
   const caffeineOptions = [
     { value: 'none', label: 'None', emoji: '🚫' },
@@ -40,12 +44,25 @@ export const Preferences: React.FC<PreferencesProps> = ({ onNext, onBack }) => {
 
   const tempOptions = [16, 17, 18, 19, 20];
 
+  const recentSleepOptions = [4, 5, 6, 7, 8, 9];
+  const fatigueOptions = [1, 2, 3, 4, 5];
+
+  const setRecentNight = (index: number, hours: number) => {
+    setRecentNights((prev) => {
+      const copy = [...prev];
+      copy[index] = hours;
+      return copy;
+    });
+  };
+
   const handleNext = () => {
     onNext({
       caffeineHabits: caffeine,
       screenBeforeBed: screenTime,
       noiseSensitivity: noise,
       roomTemperaturePrefC: temp,
+      recentSleepHours: recentNights,
+      fatigueLevel: fatigue,
     });
   };
 
@@ -150,6 +167,73 @@ export const Preferences: React.FC<PreferencesProps> = ({ onNext, onBack }) => {
               ))}
             </View>
           </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Last 3 nights of sleep</Text>
+            <Text style={styles.sectionSubtitle}>
+              Roughly how many hours did you sleep each night?
+            </Text>
+            {[0, 1, 2].map((index) => (
+              <View key={index} style={styles.recentRow}>
+                <Text style={styles.recentLabel}>Night {index + 1}</Text>
+                <View style={styles.optionRow}>
+                  {recentSleepOptions.map((hours) => {
+                    const selected = recentNights[index] === hours;
+                    return (
+                      <Card
+                        key={`${index}-${hours}`}
+                        onPress={() => setRecentNight(index, hours)}
+                        style={StyleSheet.flatten([
+                          styles.optionCard,
+                          styles.flexOption,
+                          selected && styles.optionCardSelected,
+                        ])}
+                      >
+                        <Text
+                          style={[
+                            styles.optionLabel,
+                            selected && styles.optionLabelSelected,
+                          ]}
+                        >
+                          {hours}h
+                        </Text>
+                      </Card>
+                    );
+                  })}
+                </View>
+              </View>
+            ))}
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>How wrecked do you feel most mornings?</Text>
+            <Text style={styles.sectionSubtitle}>1 = fine, 5 = completely drained</Text>
+            <View style={styles.optionRow}>
+              {fatigueOptions.map((level) => {
+                const selected = fatigue === level;
+                return (
+                  <Card
+                    key={level}
+                    onPress={() => setFatigue(level)}
+                    style={StyleSheet.flatten([
+                      styles.optionCard,
+                      styles.flexOption,
+                      selected && styles.optionCardSelected,
+                    ])}
+                  >
+                    <Text
+                      style={[
+                        styles.optionLabel,
+                        selected && styles.optionLabelSelected,
+                      ]}
+                    >
+                      {level}
+                    </Text>
+                  </Card>
+                );
+              })}
+            </View>
+          </View>
         </ScrollView>
 
         <View style={styles.footer}>
@@ -202,6 +286,10 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.sm,
     color: colors.text.tertiary,
   },
+  sectionSubtitle: {
+    fontSize: typography.sizes.sm,
+    color: colors.text.tertiary,
+  },
   optionGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -248,6 +336,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     padding: spacing.lg,
     gap: spacing.md,
+  },
+  recentRow: {
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+    gap: spacing.sm,
+  },
+  recentLabel: {
+    fontSize: typography.sizes.sm,
+    color: colors.text.secondary,
   },
 });
 

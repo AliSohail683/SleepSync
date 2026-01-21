@@ -14,6 +14,11 @@ interface SleepGoalsProps {
     sleepGoalHours: number;
     averageBedtime: string;
     averageWakeTime: string;
+    weekdayBedtime: string;
+    weekdayWakeTime: string;
+    weekendBedtime: string;
+    weekendWakeTime: string;
+    performanceGoals: string[];
   }) => void;
   onBack: () => void;
 }
@@ -22,16 +27,39 @@ export const SleepGoals: React.FC<SleepGoalsProps> = ({ onNext, onBack }) => {
   const [sleepGoal, setSleepGoal] = useState(8);
   const [bedtime, setBedtime] = useState('22:00');
   const [wakeTime, setWakeTime] = useState('06:00');
+  const [weekdayBedtime, setWeekdayBedtime] = useState('23:00');
+  const [weekdayWakeTime, setWeekdayWakeTime] = useState('07:00');
+  const [weekendBedtime, setWeekendBedtime] = useState('00:00');
+  const [weekendWakeTime, setWeekendWakeTime] = useState('08:00');
+  const [selectedGoals, setSelectedGoals] = useState<string[]>(['work_study']);
 
   const sleepHours = [6, 7, 8, 9, 10];
-  const bedtimes = ['21:00', '22:00', '23:00', '00:00'];
-  const wakeTimes = ['05:00', '06:00', '07:00', '08:00'];
+  const bedtimes = ['21:00', '22:00', '23:00', '00:00', '01:00'];
+  const wakeTimes = ['05:00', '06:00', '07:00', '08:00', '09:00'];
+
+  const performanceGoalOptions = [
+    { value: 'work_study', label: 'Work / Study' },
+    { value: 'sport', label: 'Sport / Gym' },
+    { value: 'aesthetics', label: 'Aesthetics / Body' },
+    { value: 'mood', label: 'Mood / Mental' },
+  ];
+
+  const toggleGoal = (value: string) => {
+    setSelectedGoals((prev) =>
+      prev.includes(value) ? prev.filter((g) => g !== value) : [...prev, value]
+    );
+  };
 
   const handleNext = () => {
     onNext({
       sleepGoalHours: sleepGoal,
       averageBedtime: bedtime,
       averageWakeTime: wakeTime,
+      weekdayBedtime,
+      weekdayWakeTime,
+      weekendBedtime,
+      weekendWakeTime,
+      performanceGoals: selectedGoals,
     });
   };
 
@@ -73,24 +101,46 @@ export const SleepGoals: React.FC<SleepGoalsProps> = ({ onNext, onBack }) => {
           </View>
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>When do you usually go to bed?</Text>
+            <Text style={styles.sectionTitle}>Typical weekday schedule</Text>
+            <Text style={styles.sectionSubtitle}>Mon–Thu / work or class days</Text>
             <View style={styles.optionRow}>
               {bedtimes.map((time) => (
                 <Card
-                  key={time}
-                  onPress={() => setBedtime(time)}
+                  key={`wd-bed-${time}`}
+                  onPress={() => setWeekdayBedtime(time)}
                   style={StyleSheet.flatten([
                     styles.optionCard,
-                    bedtime === time && styles.optionCardSelected,
+                    weekdayBedtime === time && styles.optionCardSelected,
                   ])}
                 >
                   <Text
                     style={[
                       styles.optionText,
-                      bedtime === time && styles.optionTextSelected,
+                      weekdayBedtime === time && styles.optionTextSelected,
                     ]}
                   >
-                    {time}
+                    Bed {time}
+                  </Text>
+                </Card>
+              ))}
+            </View>
+            <View style={[styles.optionRow, { marginTop: spacing.md }]}>
+              {wakeTimes.map((time) => (
+                <Card
+                  key={`wd-wake-${time}`}
+                  onPress={() => setWeekdayWakeTime(time)}
+                  style={StyleSheet.flatten([
+                    styles.optionCard,
+                    weekdayWakeTime === time && styles.optionCardSelected,
+                  ])}
+                >
+                  <Text
+                    style={[
+                      styles.optionText,
+                      weekdayWakeTime === time && styles.optionTextSelected,
+                    ]}
+                  >
+                    Wake {time}
                   </Text>
                 </Card>
               ))}
@@ -98,27 +148,80 @@ export const SleepGoals: React.FC<SleepGoalsProps> = ({ onNext, onBack }) => {
           </View>
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>When do you usually wake up?</Text>
+            <Text style={styles.sectionTitle}>Typical weekend schedule</Text>
+            <Text style={styles.sectionSubtitle}>Fri–Sun</Text>
             <View style={styles.optionRow}>
-              {wakeTimes.map((time) => (
+              {bedtimes.map((time) => (
                 <Card
-                  key={time}
-                  onPress={() => setWakeTime(time)}
+                  key={`we-bed-${time}`}
+                  onPress={() => setWeekendBedtime(time)}
                   style={StyleSheet.flatten([
                     styles.optionCard,
-                    wakeTime === time && styles.optionCardSelected,
+                    weekendBedtime === time && styles.optionCardSelected,
                   ])}
                 >
                   <Text
                     style={[
                       styles.optionText,
-                      wakeTime === time && styles.optionTextSelected,
+                      weekendBedtime === time && styles.optionTextSelected,
                     ]}
                   >
-                    {time}
+                    Bed {time}
                   </Text>
                 </Card>
               ))}
+            </View>
+            <View style={[styles.optionRow, { marginTop: spacing.md }]}>
+              {wakeTimes.map((time) => (
+                <Card
+                  key={`we-wake-${time}`}
+                  onPress={() => setWeekendWakeTime(time)}
+                  style={StyleSheet.flatten([
+                    styles.optionCard,
+                    weekendWakeTime === time && styles.optionCardSelected,
+                  ])}
+                >
+                  <Text
+                    style={[
+                      styles.optionText,
+                      weekendWakeTime === time && styles.optionTextSelected,
+                    ]}
+                  >
+                    Wake {time}
+                  </Text>
+                </Card>
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>What are you optimizing for?</Text>
+            <Text style={styles.sectionSubtitle}>
+              We’ll frame your insights around these priorities.
+            </Text>
+            <View style={styles.optionRow}>
+              {performanceGoalOptions.map((option) => {
+                const selected = selectedGoals.includes(option.value);
+                return (
+                  <Card
+                    key={option.value}
+                    onPress={() => toggleGoal(option.value)}
+                    style={StyleSheet.flatten([
+                      styles.optionCard,
+                      selected && styles.optionCardSelected,
+                    ])}
+                  >
+                    <Text
+                      style={[
+                        styles.optionText,
+                        selected && styles.optionTextSelected,
+                      ]}
+                    >
+                      {option.label}
+                    </Text>
+                  </Card>
+                );
+              })}
             </View>
           </View>
         </ScrollView>
@@ -168,6 +271,10 @@ const styles = StyleSheet.create({
     fontWeight: typography.weights.semiBold,
     color: colors.text.primary,
     marginBottom: spacing.md,
+  },
+  sectionSubtitle: {
+    fontSize: typography.sizes.sm,
+    color: colors.text.tertiary,
   },
   optionRow: {
     flexDirection: 'row',

@@ -7,7 +7,7 @@ import SQLite from 'react-native-sqlite-storage';
 import { SensorDataChunk, BaselineMetrics, SleepSessionEnhanced } from '../../types';
 
 const DB_NAME = 'sleepsync.db';
-const DB_VERSION = 2; // Increment on schema changes
+const DB_VERSION = 3; // Increment on schema changes - Added raw sensor data table
 
 SQLite.DEBUG(false);
 SQLite.enablePromise(true);
@@ -75,6 +75,12 @@ class Database {
     if (currentVersion < 2) {
       await this.migration2();
       await this.recordMigration(2);
+    }
+
+    // Migration 3: Raw sensor data table for native service
+    if (currentVersion < 3) {
+      await this.migration3();
+      await this.recordMigration(3);
     }
   }
 
@@ -233,6 +239,40 @@ class Database {
         error_message TEXT,
         FOREIGN KEY (user_id) REFERENCES user_profile(id)
       )
+    `);
+  }
+
+  /**
+   * Migration 3: Raw sensor data table for native service
+   * This table is written to directly by the Android foreground service
+   * No foreign key constraint to allow writes before session validation
+   */
+  private async migration3(): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    // Raw sensor data table (for native service to write directly)
+    await this.db.executeSql(`
+      CREATE TABLE IF NOT EXISTS sensor_data_raw (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        timestamp INTEGER NOT NULL,
+        x REAL NOT NULL,
+        y REAL NOT NULL,
+        z REAL NOT NULL,
+        sensor_type TEXT DEFAULT 'accelerometer',
+        processed INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL
+      )
+    `);
+
+    await this.db.executeSql(`
+      CREATE INDEX IF NOT EXISTS idx_sensor_raw_session_timestamp 
+      ON sensor_data_raw(session_id, timestamp)
+    `);
+
+    await this.db.executeSql(`
+      CREATE INDEX IF NOT EXISTS idx_sensor_raw_processed 
+      ON sensor_data_raw(session_id, processed)
     `);
   }
 

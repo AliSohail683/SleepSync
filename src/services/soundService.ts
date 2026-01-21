@@ -4,9 +4,9 @@
  */
 
 import Sound from 'react-native-sound';
-import { SoundProfile, UserProfile, SleepSession, UUID } from '@/models';
+import { SoundProfile, UserProfile, SleepSession, UUID } from '../models';
 import { storageService } from './storageService';
-import { generateSoundProfile, createDefaultSoundProfile } from '@/utils/soundUtils';
+import { generateSoundProfile, createDefaultSoundProfile } from '../utils/soundUtils';
 import { APP_CONFIG } from '../config/constants';
 
 // Enable playback in silence mode (iOS)

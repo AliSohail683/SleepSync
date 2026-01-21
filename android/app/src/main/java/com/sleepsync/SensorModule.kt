@@ -124,11 +124,11 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             // Detect snoring (200-400 Hz range with sufficient volume)
             val isSnoring = frequency >= 200 && frequency <= 400 && normalizedDecibel > 40
 
-            sendEvent("AudioData", createMap().apply {
-              putDouble("decibel", normalizedDecibel)
-              putDouble("frequency", frequency)
-              putBoolean("isSnoring", isSnoring)
-            })
+            val params = WritableNativeMap()
+            params.putDouble("decibel", normalizedDecibel)
+            params.putDouble("frequency", frequency)
+            params.putBoolean("isSnoring", isSnoring)
+            sendEvent("AudioData", params)
           }
 
           Thread.sleep(interval.toLong())
@@ -200,9 +200,9 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     if (event?.sensor?.type == Sensor.TYPE_LIGHT && isLightSensorActive) {
       val lux = event.values[0].toDouble()
 
-      sendEvent("LightData", createMap().apply {
-        putDouble("lux", lux)
-      })
+      val params = WritableNativeMap()
+      params.putDouble("lux", lux)
+      sendEvent("LightData", params)
     }
   }
 
@@ -213,9 +213,23 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
   // MARK: - Helper
 
   private fun sendEvent(eventName: String, params: WritableMap) {
+    // Modern event emitter pattern - works with both old and new architecture
     reactApplicationContext
       .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
       .emit(eventName, params)
+  }
+  
+  override fun invalidate() {
+    super.invalidate()
+    // Cleanup resources when module is invalidated
+    isMicrophoneActive = false
+    isLightSensorActive = false
+    audioRecord?.stop()
+    audioRecord?.release()
+    audioRecord = null
+    sensorManager.unregisterListener(this)
+    recordingThread?.interrupt()
+    recordingThread = null
   }
 }
 

@@ -10,7 +10,7 @@ import { colors } from '../config/theme';
 
 interface GradientBackgroundProps {
   children: ReactNode;
-  variant?: 'default' | 'primary' | 'success' | 'warning';
+  variant?: 'default' | 'primary' | 'success' | 'warning' | 'alarm';
 }
 
 export const GradientBackground: React.FC<GradientBackgroundProps> = ({
@@ -22,13 +22,14 @@ export const GradientBackground: React.FC<GradientBackgroundProps> = ({
     primary: colors.gradients.primaryButton,
     success: colors.gradients.scoreGood,
     warning: colors.gradients.scoreWarning,
+    alarm: ['#FF6B6B', '#FF8E53', '#FF6B6B'] as const,
   }[variant];
 
   return (
     <LinearGradient
       colors={gradientColors}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 0, y: 1 }}
+      start={variant === 'alarm' ? { x: 0, y: 0 } : { x: 0, y: 0 }}
+      end={variant === 'alarm' ? { x: 1, y: 1 } : { x: 0, y: 1 }}
       style={styles.gradient}
     >
       {children}

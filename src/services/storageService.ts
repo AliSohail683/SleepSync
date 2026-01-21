@@ -23,19 +23,38 @@ SQLite.enablePromise(true);
 
 class StorageService {
   private db: SQLite.SQLiteDatabase | null = null;
+  private isDbInitialized = false;
+
+  /**
+   * Check if database is initialized
+   */
+  isInitialized(): boolean {
+    return this.isDbInitialized && this.db !== null;
+  }
 
   /**
    * Initialize database and create tables
    */
   async setupDB(): Promise<void> {
+    // If already initialized, skip
+    if (this.isDbInitialized && this.db) {
+      return;
+    }
+
     try {
       this.db = await SQLite.openDatabase({
         name: DB_NAME,
         location: 'default',
       });
 
+      if (!this.db) {
+        throw new Error('Failed to open database');
+      }
+
       // Create tables with proper schema
       await this.db.executeSql('PRAGMA journal_mode = WAL');
+      
+      this.isDbInitialized = true;
       
       await this.db.executeSql(`
         CREATE TABLE IF NOT EXISTS user_profile (
@@ -128,6 +147,31 @@ class StorageService {
       await this.db.executeSql('CREATE INDEX IF NOT EXISTS idx_sleep_session_date ON sleep_session(start_at)');
       await this.db.executeSql('CREATE INDEX IF NOT EXISTS idx_sleep_debt_date ON sleep_debt_record(date)');
 
+      // Raw sensor data table (for native service to write directly)
+      await this.db.executeSql(`
+        CREATE TABLE IF NOT EXISTS sensor_data_raw (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT NOT NULL,
+          timestamp INTEGER NOT NULL,
+          x REAL NOT NULL,
+          y REAL NOT NULL,
+          z REAL NOT NULL,
+          sensor_type TEXT DEFAULT 'accelerometer',
+          processed INTEGER DEFAULT 0,
+          created_at TEXT NOT NULL
+        )
+      `);
+
+      await this.db.executeSql(`
+        CREATE INDEX IF NOT EXISTS idx_sensor_raw_session_timestamp 
+        ON sensor_data_raw(session_id, timestamp)
+      `);
+
+      await this.db.executeSql(`
+        CREATE INDEX IF NOT EXISTS idx_sensor_raw_processed 
+        ON sensor_data_raw(session_id, processed)
+      `);
+
       console.log('✅ Database initialized successfully');
     } catch (error) {
       console.error('❌ Database initialization failed:', error);
@@ -139,7 +183,7 @@ class StorageService {
    * Get database instance
    */
   private getDB(): SQLite.SQLiteDatabase {
-    if (!this.db) {
+    if (!this.db || !this.isDbInitialized) {
       throw new Error('Database not initialized. Call setupDB() first.');
     }
     return this.db;
@@ -271,28 +315,33 @@ class StorageService {
   // ============ SLEEP SESSION ============
 
   async createSleepSession(session: SleepSession): Promise<void> {
-    const db = this.getDB();
-    await db.executeSql(
-      `INSERT INTO sleep_session (
-        id, user_id, start_at, end_at, duration_min, stage_light, stage_deep, stage_rem,
-        sleep_score, awake_count, sleep_latency, device_data, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        session.id,
-        session.userId,
-        session.startAt,
-        session.endAt || null,
-        session.durationMin || null,
-        session.stages?.light || null,
-        session.stages?.deep || null,
-        session.stages?.rem || null,
-        session.sleepScore || null,
-        session.awakeCount || 0,
-        session.sleepLatency || null,
-        session.deviceData ? JSON.stringify(session.deviceData) : null,
-        session.notes || null,
-      ]
-    );
+    try {
+      const db = this.getDB();
+      await db.executeSql(
+        `INSERT INTO sleep_session (
+          id, user_id, start_at, end_at, duration_min, stage_light, stage_deep, stage_rem,
+          sleep_score, awake_count, sleep_latency, device_data, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          session.id,
+          session.userId,
+          session.startAt,
+          session.endAt || null,
+          session.durationMin || null,
+          session.stages?.light || null,
+          session.stages?.deep || null,
+          session.stages?.rem || null,
+          session.sleepScore || null,
+          session.awakeCount || 0,
+          session.sleepLatency || null,
+          session.deviceData ? JSON.stringify(session.deviceData) : null,
+          session.notes || null,
+        ]
+      );
+    } catch (error: any) {
+      console.error('Failed to create sleep session in database:', error);
+      throw new Error(`Database error: ${error?.message || 'Failed to save sleep session'}`);
+    }
   }
 
   async updateSleepSession(sessionId: UUID, updates: Partial<SleepSession>): Promise<void> {
@@ -468,46 +517,103 @@ class StorageService {
   // ============ ALARM CONFIG ============
 
   async createAlarmConfig(config: AlarmConfig): Promise<void> {
+    console.log('💾 createAlarmConfig called:', {
+      id: config.id,
+      userId: config.userId,
+      windowStart: config.targetWindowStart,
+      windowEnd: config.targetWindowEnd,
+      daysOfWeek: config.daysOfWeek,
+    });
+
+    // Ensure database is initialized
+    if (!this.isDbInitialized) {
+      console.log('🔄 Database not initialized, setting up...');
+      await this.setupDB();
+    }
+    
     const db = this.getDB();
-    await db.executeSql(
-      `INSERT INTO alarm_config (
-        id, user_id, enabled, target_window_start, target_window_end,
-        gentle_wake, sound_profile_id, vibration_enabled, days_of_week
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        config.id,
-        config.userId,
-        config.enabled ? 1 : 0,
-        config.targetWindowStart,
-        config.targetWindowEnd,
-        config.gentleWake ? 1 : 0,
-        config.soundProfileId || null,
-        config.vibrationEnabled ? 1 : 0,
-        JSON.stringify(config.daysOfWeek),
-      ]
-    );
+    const daysOfWeekJson = JSON.stringify(config.daysOfWeek);
+    
+    console.log('📝 Inserting alarm config with values:', {
+      id: config.id,
+      userId: config.userId,
+      enabled: config.enabled ? 1 : 0,
+      windowStart: config.targetWindowStart,
+      windowEnd: config.targetWindowEnd,
+      daysOfWeekJson,
+    });
+
+    try {
+      await db.executeSql(
+        `INSERT INTO alarm_config (
+          id, user_id, enabled, target_window_start, target_window_end,
+          gentle_wake, sound_profile_id, vibration_enabled, days_of_week
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          config.id,
+          config.userId,
+          config.enabled ? 1 : 0,
+          config.targetWindowStart,
+          config.targetWindowEnd,
+          config.gentleWake ? 1 : 0,
+          config.soundProfileId || null,
+          config.vibrationEnabled ? 1 : 0,
+          daysOfWeekJson,
+        ]
+      );
+      console.log('✅ Alarm config inserted successfully');
+    } catch (error: any) {
+      console.error('❌ SQL error inserting alarm config:', error);
+      console.error('Error details:', {
+        message: error?.message,
+        code: error?.code,
+        sqlState: error?.sqlState,
+      });
+      throw error;
+    }
   }
 
   async getAlarmConfigs(userId: UUID): Promise<AlarmConfig[]> {
+    // Ensure database is initialized
+    if (!this.isDbInitialized) {
+      await this.setupDB();
+    }
+
     const results = await this.executeQuery<any>(
       'SELECT * FROM alarm_config WHERE user_id = ?',
       [userId]
     );
 
-    return results.map((row) => ({
-      id: row.id,
-      userId: row.user_id,
-      enabled: row.enabled === 1,
-      targetWindowStart: row.target_window_start,
-      targetWindowEnd: row.target_window_end,
-      gentleWake: row.gentle_wake === 1,
-      soundProfileId: row.sound_profile_id,
-      vibrationEnabled: row.vibration_enabled === 1,
-      daysOfWeek: JSON.parse(row.days_of_week),
-    }));
+    return results.map((row) => {
+      let daysOfWeek: number[] = [];
+      try {
+        if (row.days_of_week) {
+          daysOfWeek = JSON.parse(row.days_of_week);
+        }
+      } catch (e) {
+        console.warn('Failed to parse days_of_week for alarm:', row.id, e);
+        daysOfWeek = []; // Default to empty array
+      }
+
+      return {
+        id: row.id,
+        userId: row.user_id,
+        enabled: row.enabled === 1,
+        targetWindowStart: row.target_window_start,
+        targetWindowEnd: row.target_window_end,
+        gentleWake: row.gentle_wake === 1,
+        soundProfileId: row.sound_profile_id,
+        vibrationEnabled: row.vibration_enabled === 1,
+        daysOfWeek,
+      };
+    });
   }
 
   async updateAlarmConfig(configId: UUID, updates: Partial<AlarmConfig>): Promise<void> {
+    // Ensure database is initialized
+    if (!this.isDbInitialized) {
+      await this.setupDB();
+    }
     const db = this.getDB();
     const fields = [];
     const values = [];
@@ -550,6 +656,10 @@ class StorageService {
   }
 
   async deleteAlarmConfig(configId: UUID): Promise<void> {
+    // Ensure database is initialized
+    if (!this.isDbInitialized) {
+      await this.setupDB();
+    }
     const db = this.getDB();
     await db.executeSql('DELETE FROM alarm_config WHERE id = ?', [configId]);
   }

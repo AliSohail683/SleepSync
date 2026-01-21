@@ -16,31 +16,44 @@ import { insightsGenerator } from '../engines/insights/InsightsGenerator';
 import { SleepSessionEnhanced } from '../types/sleep';
 import { getDurationInMinutes } from '../utils/dateUtils';
 import { backgroundTrackingService } from '../system/background/BackgroundTrackingService';
+import { sensorDataProcessor } from './SensorDataProcessor';
+import { sensorDataRepository } from '../storage/sqlite/repositories/SensorDataRepository';
+import { sleepDetector } from '../engines/sleepDetection/SleepDetector';
 
 class SleepService {
   /**
    * Start a new sleep session
    */
   async startSession(userId: UUID): Promise<SleepSession> {
-    const session: SleepSession = {
-      id: uuidv4(),
-      userId,
-      startAt: new Date().toISOString(),
-    };
-
-    await storageService.createSleepSession(session);
-    
-    // Start background tracking
     try {
-      await backgroundTrackingService.startTracking(session.id, userId);
-    } catch (error) {
-      console.warn('Failed to start background tracking:', error);
-      // Don't fail session creation if background tracking fails
+      // Ensure database is initialized
+      if (!storageService.isInitialized()) {
+        await storageService.setupDB();
+      }
+
+      const session: SleepSession = {
+        id: uuidv4(),
+        userId,
+        startAt: new Date().toISOString(),
+      };
+
+      // Create session in database first
+      await storageService.createSleepSession(session);
+      
+      // Start background tracking (non-blocking)
+      // Don't wait for it - if it fails, session is still created
+      backgroundTrackingService.startTracking(session.id, userId).catch((error) => {
+        console.warn('Background tracking failed (non-critical):', error);
+        // Session is still valid without background tracking
+      });
+      
+      console.log('✅ Sleep session started:', session.id);
+      
+      return session;
+    } catch (error: any) {
+      console.error('❌ Failed to start sleep session:', error);
+      throw new Error(`Failed to start sleep session: ${error?.message || 'Unknown error'}`);
     }
-    
-    console.log('✅ Sleep session started:', session.id);
-    
-    return session;
   }
 
   /**
@@ -79,6 +92,22 @@ class SleepService {
     if (!updatedSession.durationMin) {
       // If durationMin wasn't saved, set it directly on the session object
       updatedSession.durationMin = durationMin;
+    }
+
+    // Process any unprocessed raw sensor data before evaluation
+    // This ensures all background-collected data is converted to chunks for analysis
+    try {
+      const needsProcessing = await sensorDataProcessor.needsProcessing(sessionId);
+      if (needsProcessing) {
+        console.log('📊 Processing raw sensor data before session evaluation...');
+        const processed = await sensorDataProcessor.processSessionData(sessionId);
+        if (processed > 0) {
+          console.log(`✅ Processed ${processed} raw sensor data points before evaluation`);
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to process raw sensor data before evaluation:', error);
+      // Continue with evaluation even if processing fails - we can use fallback data
     }
 
     // Evaluate the session to fill in stages and score
@@ -120,14 +149,97 @@ class SleepService {
     }
 
     // Get sleep stages from sleep detection engine (real sensor data)
-    // Fallback to estimation only if no real data available
+    // Process sensor chunks through sleep detection engine
     let stages;
-    if (session.stages) {
-      // Use real stages from detection engine
-      stages = session.stages;
-    } else {
-      // Fallback estimation (should rarely be needed if sensors are working)
-      console.warn('⚠️ No real stage data available, using fallback estimation');
+    try {
+      // Load sensor data chunks for this session
+      const chunks = await sensorDataRepository.getChunksForSession(session.id);
+      
+      if (chunks.length > 0) {
+        console.log(`📊 Processing ${chunks.length} sensor chunks through sleep detection engine`);
+        
+        // Reset detector for new session
+        sleepDetector.reset();
+        
+        // Process all chunks through sleep detector
+        const stageCounts = {
+          light: 0,
+          deep: 0,
+          rem: 0,
+          awake: 0,
+        };
+        
+        let totalProcessed = 0;
+        let awakeEvents = 0;
+        let previousState: 'asleep' | 'awake' = 'awake';
+        let sleepOnsetTime: number | null = null;
+        const sessionStartTime = new Date(session.startAt).getTime();
+        
+        for (const chunk of chunks) {
+          try {
+            const detection = sleepDetector.processChunk(chunk);
+            if (detection.state.stage) {
+              stageCounts[detection.state.stage]++;
+              totalProcessed++;
+            }
+            
+            // Track sleep onset (first time we enter sleep state)
+            if (detection.state.isAsleep && previousState === 'awake' && sleepOnsetTime === null) {
+              sleepOnsetTime = chunk.timestamp;
+            }
+            
+            // Count awake events (transitions from asleep to awake)
+            if (!detection.state.isAsleep && previousState === 'asleep') {
+              awakeEvents++;
+            }
+            
+            previousState = detection.state.isAsleep ? 'asleep' : 'awake';
+          } catch (error) {
+            console.warn('Failed to process chunk:', error);
+            // Continue with next chunk
+          }
+        }
+        
+        if (totalProcessed > 0) {
+          // Calculate percentages
+          const lightPercent = stageCounts.light / totalProcessed;
+          const deepPercent = stageCounts.deep / totalProcessed;
+          const remPercent = stageCounts.rem / totalProcessed;
+          
+          // Convert to hours based on actual session duration
+          const sessionHours = session.durationMin / 60;
+          
+          stages = {
+            light: sessionHours * lightPercent,
+            deep: sessionHours * deepPercent,
+            rem: sessionHours * remPercent,
+          };
+          
+          // Calculate sleep latency (time to fall asleep in minutes)
+          let sleepLatency = 0;
+          if (sleepOnsetTime) {
+            const latencyMs = sleepOnsetTime - sessionStartTime;
+            sleepLatency = Math.max(0, latencyMs / (1000 * 60)); // Convert to minutes
+          }
+          
+          // Update session with calculated metrics
+          await storageService.updateSleepSession(session.id, {
+            awakeCount: awakeEvents,
+            sleepLatency: sleepLatency > 0 ? sleepLatency : undefined,
+          });
+          
+          console.log(`✅ Calculated stages from ${totalProcessed} processed chunks:`, stages);
+          console.log(`✅ Awake events: ${awakeEvents}, Sleep latency: ${sleepLatency.toFixed(1)} min`);
+        } else {
+          throw new Error('No chunks processed successfully');
+        }
+      } else {
+        throw new Error('No sensor chunks found');
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to calculate stages from sensor data:', error);
+      console.warn('⚠️ Using fallback estimation');
+      // Fallback to estimation if sensor data processing fails
       stages = estimateSleepStages(session.durationMin);
     }
 
@@ -139,10 +251,11 @@ class SleepService {
     // Calculate sleep score
     const sleepScore = calculateSleepScore(session, sleepGoalHours, caffeineHabits);
 
-    // Calculate awake count and sleep latency from actual session data
-    // These should come from the sleep detection engine analysis
-    const awakeCount = session.awakeCount || 0;
-    const sleepLatency = session.sleepLatency || 0;
+    // Awake count and sleep latency are now calculated during stage processing above
+    // Get the updated values from the session
+    const updatedSessionForMetrics = await storageService.getSleepSession(session.id);
+    const awakeCount = updatedSessionForMetrics?.awakeCount || 0;
+    const sleepLatency = updatedSessionForMetrics?.sleepLatency || 0;
 
     // Update session with evaluation results
     await storageService.updateSleepSession(session.id, {
@@ -189,13 +302,17 @@ class SleepService {
     const recentSessions = await storageService.getRecentSessions(userId, 5);
     const activeSession = recentSessions.find((session) => !session.endAt);
     
-    // If active session found, recover background tracking
+    // If active session found, recover background tracking (non-blocking with timeout)
     if (activeSession) {
-      try {
-        await backgroundTrackingService.recoverTracking(activeSession);
-      } catch (error) {
+      // Don't await - let recovery happen in background to prevent blocking
+      Promise.race([
+        backgroundTrackingService.recoverTracking(activeSession),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Recovery timeout')), 8000)
+        )
+      ]).catch((error) => {
         console.warn('Failed to recover background tracking:', error);
-      }
+      });
     }
     
     return activeSession || null;

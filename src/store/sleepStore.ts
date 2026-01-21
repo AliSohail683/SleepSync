@@ -32,10 +32,12 @@ export const useSleepStore = create<SleepState>((set, get) => ({
     try {
       const session = await sleepService.startSession(userId);
       set({ currentSession: session, isLoading: false });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to start session:', error);
       set({ isLoading: false });
-      throw error;
+      // Re-throw with a user-friendly message
+      const errorMessage = error?.message || 'Failed to start sleep session. Please try again.';
+      throw new Error(errorMessage);
     }
   },
 

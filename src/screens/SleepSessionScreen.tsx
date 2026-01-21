@@ -4,10 +4,10 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientBackground, Button, Card } from '../components';
-import { colors, typography, spacing } from '../config/theme';
+import { colors, typography, spacing, borderRadius } from '../config/theme';
 import { useSleepStore } from '../store/sleepStore';
 import { useUserStore } from '../store/userStore';
 
@@ -20,9 +20,10 @@ export const SleepSessionScreen: React.FC<SleepSessionScreenProps> = ({
   onComplete,
   onCancel,
 }) => {
-  const { currentSession, startSession, endSession } = useSleepStore();
+  const { currentSession, startSession, endSession, isLoading } = useSleepStore();
   const { profile } = useUserStore();
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!currentSession) return;
@@ -44,8 +45,39 @@ export const SleepSessionScreen: React.FC<SleepSessionScreenProps> = ({
   };
 
   const handleStartSession = async (): Promise<void> => {
-    if (!profile) return;
-    await startSession(profile.id);
+    if (!profile) {
+      setError('Cannot start session: No user profile');
+      return;
+    }
+    
+    setError(null);
+    
+    // Wrap in additional try-catch to prevent any unhandled errors
+    try {
+      await startSession(profile.id).catch((error: any) => {
+        // This catch handles any errors that might slip through
+        console.error('Session start error (caught):', error);
+        throw error; // Re-throw to be caught by outer try-catch
+      });
+    } catch (error: any) {
+      console.error('Failed to start session:', error);
+      
+      // Extract meaningful error message
+      let errorMessage = 'Failed to start sleep session. Please try again.';
+      
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      } else if (error?.code) {
+        errorMessage = `Error ${error.code}: ${error.message || 'Unknown error'}`;
+      }
+      
+      setError(errorMessage);
+      
+      // Log full error for debugging
+      console.error('Full error details:', JSON.stringify(error, null, 2));
+    }
   };
 
   const handleEndSession = async (): Promise<void> => {
@@ -76,12 +108,20 @@ export const SleepSessionScreen: React.FC<SleepSessionScreenProps> = ({
               <InfoItem icon="💤" text="Wake events" />
             </Card>
 
+            {error && (
+              <View style={styles.errorContainer}>
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            )}
+
             <View style={styles.actions}>
               <Button
-                title="Start Session"
+                title={isLoading ? "Starting..." : "Start Session"}
                 onPress={handleStartSession}
                 size="large"
                 fullWidth
+                disabled={isLoading}
+                loading={isLoading}
               />
               <Button
                 title="Cancel"
@@ -89,6 +129,7 @@ export const SleepSessionScreen: React.FC<SleepSessionScreenProps> = ({
                 variant="ghost"
                 size="medium"
                 fullWidth
+                disabled={isLoading}
               />
             </View>
           </View>
@@ -100,34 +141,42 @@ export const SleepSessionScreen: React.FC<SleepSessionScreenProps> = ({
   return (
     <GradientBackground>
       <SafeAreaView style={styles.container}>
-        <View style={styles.content}>
-          <Text style={styles.emoji}>😴</Text>
-          <Text style={styles.title}>Sleep Session Active</Text>
-          <Text style={styles.subtitle}>
-            Started at {new Date(currentSession.startAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-          </Text>
-
-          <View style={styles.timerContainer}>
-            <Text style={styles.timer}>{formatTime(elapsedTime)}</Text>
-            <Text style={styles.timerLabel}>Time Asleep</Text>
-          </View>
-
-          <View style={styles.statusCards}>
-            <StatCard icon="🌊" label="Stage" value="Light" />
-            <StatCard icon="💤" label="Quality" value="Good" />
-          </View>
-
-          <View style={styles.actions}>
-            <Button
-              title="End Session"
-              onPress={handleEndSession}
-              size="large"
-              fullWidth
-            />
-            <Text style={styles.hint}>
-              Your sleep will be analyzed when you end the session
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+        >
+          <View style={styles.content}>
+            <Text style={styles.emoji}>😴</Text>
+            <Text style={styles.title}>Sleep Session Active</Text>
+            <Text style={styles.subtitle}>
+              Started at {new Date(currentSession.startAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </Text>
+
+            <View style={styles.timerContainer}>
+              <Text style={styles.timer}>{formatTime(elapsedTime)}</Text>
+              <Text style={styles.timerLabel}>Time Asleep</Text>
+            </View>
+
+            <View style={styles.statusCards}>
+              <StatCard icon="🌊" label="Stage" value="Light" />
+              <StatCard icon="💤" label="Quality" value="Good" />
+            </View>
           </View>
+        </ScrollView>
+        
+        <View style={styles.footer}>
+          <Button
+            title="End Session"
+            onPress={handleEndSession}
+            size="large"
+            fullWidth
+            disabled={isLoading}
+            loading={isLoading}
+          />
+          <Text style={styles.hint}>
+            Your sleep will be analyzed when you end the session
+          </Text>
         </View>
       </SafeAreaView>
     </GradientBackground>
@@ -164,11 +213,20 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  content: {
-    flex: 1,
+  scrollContent: {
+    flexGrow: 1,
     padding: spacing.lg,
-    justifyContent: 'center',
+  },
+  content: {
     alignItems: 'center',
+    paddingBottom: spacing.xl,
+  },
+  footer: {
+    width: '100%',
+    padding: spacing.lg,
+    paddingTop: spacing.md,
+    backgroundColor: 'transparent',
+    borderTopWidth: 0,
   },
   emoji: {
     fontSize: 80,
@@ -189,13 +247,16 @@ const styles = StyleSheet.create({
   },
   timerContainer: {
     alignItems: 'center',
-    marginVertical: spacing['3xl'],
+    marginVertical: spacing['2xl'],
+    width: '100%',
   },
   timer: {
-    fontSize: 72,
+    fontSize: 64,
     fontWeight: typography.weights.bold,
     color: colors.primary.light,
-    letterSpacing: 4,
+    letterSpacing: 2,
+    textAlign: 'center',
+    includeFontPadding: false,
   },
   timerLabel: {
     fontSize: typography.sizes.lg,
@@ -253,10 +314,25 @@ const styles = StyleSheet.create({
   actions: {
     width: '100%',
     gap: spacing.md,
+    paddingTop: spacing.lg,
   },
   hint: {
     fontSize: typography.sizes.sm,
     color: colors.text.tertiary,
+    textAlign: 'center',
+  },
+  errorContainer: {
+    width: '100%',
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    backgroundColor: 'rgba(248, 113, 113, 0.1)',
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.error,
+  },
+  errorText: {
+    fontSize: typography.sizes.sm,
+    color: colors.error,
     textAlign: 'center',
   },
 });

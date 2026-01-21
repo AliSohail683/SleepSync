@@ -15,10 +15,22 @@ class SleepTrackingModule(reactContext: ReactApplicationContext) :
     fun startTracking(promise: Promise) {
         try {
             val context = reactApplicationContext
+            if (context == null) {
+                promise.reject("NO_CONTEXT", "React context is null")
+                return
+            }
+            
+            // Check if service is already running
+            if (isServiceRunning(context, SleepTrackingService::class.java)) {
+                promise.resolve(true)
+                return
+            }
+            
             SleepTrackingService.startService(context)
             promise.resolve(true)
         } catch (e: Exception) {
-            promise.reject("START_TRACKING_ERROR", e.message, e)
+            android.util.Log.e("SleepTrackingModule", "Failed to start tracking", e)
+            promise.reject("START_TRACKING_ERROR", e.message ?: "Unknown error", e)
         }
     }
     

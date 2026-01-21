@@ -12,4 +12,5 @@ export { LoadingSpinner } from './LoadingSpinner';
 export { Header } from './Header';
 export { Input } from './Input';
 export { Slider } from './Slider';
+export { TimePicker } from './TimePicker';
 

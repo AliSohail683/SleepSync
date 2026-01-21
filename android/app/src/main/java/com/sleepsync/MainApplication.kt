@@ -19,6 +19,7 @@ class MainApplication : Application(), ReactApplication {
               // Add custom native modules
               add(SensorPackage())
               add(SleepTrackingPackage())
+              add(PowerManagerPackage())
             }
 
         override fun getJSMainModuleName(): String = "index"

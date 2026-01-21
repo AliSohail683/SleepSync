@@ -17,6 +17,9 @@ class MainActivity : ReactActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     supportFragmentManager.fragmentFactory = RNScreensFragmentFactory()
     super.onCreate(savedInstanceState)
+    
+    // Alarm handling is done via notification handler in JavaScript
+    // AlarmActivity launches MainActivity, and the notification triggers the alarm screen
   }
   /**
    * Returns the instance of the [ReactActivityDelegate]. We use [DefaultReactActivityDelegate]

@@ -2,7 +2,7 @@
  * Alarm and wake time calculation utilities
  */
 
-import { AlarmConfig } from '@/models';
+import { AlarmConfig } from '../models';
 import { parseTimeString } from './dateUtils';
 
 /**
@@ -23,6 +23,17 @@ export const computeWakeMoment = (
   
   const endDate = new Date(now);
   endDate.setHours(end.hours, end.minutes, 0, 0);
+
+  // If start time has passed today, schedule for tomorrow
+  // Use < instead of <= to allow exact time matches, with 1 minute buffer
+  const oneMinuteBuffer = 60 * 1000; // 1 minute buffer
+  if (startDate.getTime() < (now.getTime() - oneMinuteBuffer)) {
+    startDate.setDate(startDate.getDate() + 1);
+    endDate.setDate(endDate.getDate() + 1);
+    console.log('⏰ Wake time has passed, scheduling for tomorrow:', startDate.toLocaleString());
+  } else {
+    console.log('⏰ Wake time is today or very close:', startDate.toLocaleString());
+  }
 
   // If we have predicted stages, find the earliest light sleep moment
   if (predictedStages && predictedStages.length > 0) {
@@ -113,14 +124,38 @@ export const formatAlarmWindow = (start: string, end: string): string => {
  * Validate alarm configuration
  */
 export const validateAlarmConfig = (config: Partial<AlarmConfig>): boolean => {
-  if (!config.targetWindowStart || !config.targetWindowEnd) return false;
+  console.log('🔍 Validating alarm config:', {
+    hasWindowStart: !!config.targetWindowStart,
+    hasWindowEnd: !!config.targetWindowEnd,
+    hasDaysOfWeek: Array.isArray(config.daysOfWeek) && config.daysOfWeek.length > 0,
+    windowStart: config.targetWindowStart,
+    windowEnd: config.targetWindowEnd,
+    daysOfWeek: config.daysOfWeek,
+  });
+
+  if (!config.targetWindowStart || !config.targetWindowEnd) {
+    console.warn('❌ Validation failed: Missing window times');
+    return false;
+  }
+
+  // Check daysOfWeek
+  if (!config.daysOfWeek || !Array.isArray(config.daysOfWeek) || config.daysOfWeek.length === 0) {
+    console.warn('❌ Validation failed: No days selected');
+    return false;
+  }
   
   const start = parseTimeString(config.targetWindowStart);
   const end = parseTimeString(config.targetWindowEnd);
   
   // Validate time format
-  if (start.hours < 0 || start.hours > 23 || start.minutes < 0 || start.minutes > 59) return false;
-  if (end.hours < 0 || end.hours > 23 || end.minutes < 0 || end.minutes > 59) return false;
+  if (start.hours < 0 || start.hours > 23 || start.minutes < 0 || start.minutes > 59) {
+    console.warn('❌ Validation failed: Invalid start time format');
+    return false;
+  }
+  if (end.hours < 0 || end.hours > 23 || end.minutes < 0 || end.minutes > 59) {
+    console.warn('❌ Validation failed: Invalid end time format');
+    return false;
+  }
   
   // End should be after start (within same day or crossing midnight)
   const startMinutes = start.hours * 60 + start.minutes;
@@ -128,13 +163,18 @@ export const validateAlarmConfig = (config: Partial<AlarmConfig>): boolean => {
   
   if (endMinutes <= startMinutes) {
     // Could be crossing midnight, which is valid
+    console.log('✅ Validation passed: Window crosses midnight');
     return true;
   }
   
-  // Window should be reasonable (15-60 minutes)
+  // Window should be reasonable (at least 5 minutes, max 4 hours)
   const windowSize = endMinutes - startMinutes;
-  if (windowSize < 15 || windowSize > 120) return false;
+  if (windowSize < 5 || windowSize > 240) {
+    console.warn('❌ Validation failed: Window size out of range', { windowSize });
+    return false;
+  }
 
+  console.log('✅ Validation passed');
   return true;
 };
 

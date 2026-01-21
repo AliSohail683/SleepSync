@@ -3,7 +3,7 @@
  * Coordinates background sleep tracking across platforms
  */
 
-import { Platform, NativeModules, NativeEventEmitter } from 'react-native';
+import { Platform, NativeModules } from 'react-native';
 import { backgroundManager } from './BackgroundManager';
 import { healthSyncService } from '../../integrations/health/HealthSyncService';
 import { SleepSession } from '../../models';
@@ -19,18 +19,12 @@ const { SleepTrackingModule } = NativeModules as {
 
 class BackgroundTrackingService {
   private isTracking = false;
-  private eventEmitter: NativeEventEmitter | null = null;
-  private sensorDataBuffer: Array<{ magnitude: number; timestamp: number }> = [];
 
   /**
    * Initialize background tracking
+   * Note: Native service now writes directly to database, no event emitter needed
    */
   async initialize(): Promise<void> {
-    if (Platform.OS === 'android' && SleepTrackingModule) {
-      this.eventEmitter = new NativeEventEmitter(SleepTrackingModule);
-      this.eventEmitter.addListener('BackgroundSensorData', this.handleSensorData.bind(this));
-    }
-
     // Initialize background manager
     await backgroundManager.initialize();
   }
@@ -46,17 +40,44 @@ class BackgroundTrackingService {
 
     try {
       if (Platform.OS === 'android' && SleepTrackingModule) {
-        await SleepTrackingModule.startTracking();
+        try {
+          const result = await Promise.race([
+            SleepTrackingModule.startTracking(),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Timeout starting background service')), 5000)
+            )
+          ]);
+          console.log('Background service started:', result);
+        } catch (nativeError: any) {
+          console.error('Native module error:', nativeError);
+          console.error('Error details:', {
+            code: nativeError?.code,
+            message: nativeError?.message,
+            userInfo: nativeError?.userInfo,
+          });
+          // If native module fails, we can still track the session
+          // but without background service
+          console.warn('Continuing without background service...');
+          // Don't set isTracking to true if service failed
+          return;
+        }
       } else if (Platform.OS === 'ios') {
         // iOS background tasks are handled separately
-        await this.scheduleIOSBackgroundTask(sessionId, userId);
+        try {
+          await this.scheduleIOSBackgroundTask(sessionId, userId);
+        } catch (iosError) {
+          console.error('iOS background task error:', iosError);
+          return;
+        }
       }
 
       this.isTracking = true;
       console.log('✅ Background tracking started');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to start background tracking:', error);
-      throw error;
+      console.error('Error stack:', error?.stack);
+      // Don't throw - allow session to start even if background tracking fails
+      // The session can still be tracked manually
     }
   }
 
@@ -73,11 +94,7 @@ class BackgroundTrackingService {
         await SleepTrackingModule.stopTracking();
       }
 
-      // Flush any buffered sensor data
-      await this.flushSensorData();
-
       this.isTracking = false;
-      this.sensorDataBuffer = [];
       console.log('✅ Background tracking stopped');
     } catch (error) {
       console.error('Failed to stop background tracking:', error);
@@ -118,12 +135,43 @@ class BackgroundTrackingService {
 
   /**
    * Fill data gap using HealthKit/Google Fit
+   * Non-blocking with timeout to prevent hanging
+   * For Android: Checks if Google Fit is installed and prompts user to connect
    */
   private async fillGapWithHealthData(session: SleepSession): Promise<void> {
     try {
-      const hasPermission = await healthSyncService.requestPermissions();
+      if (Platform.OS === 'android') {
+        // Check if Google Fit is installed first
+        const { googleFitManager } = require('../../integrations/health/GoogleFitManager');
+        const isInstalled = await googleFitManager.isGoogleFitInstalled();
+        
+        if (!isInstalled) {
+          console.warn('⚠️ Google Fit is not installed. Cannot fill gap with health data.');
+          console.log('💡 User should install Google Fit from Play Store to enable health data sync');
+          return;
+        }
+        
+        console.log('✅ Google Fit is installed, proceeding with authorization...');
+      }
+
+      // Add longer timeout for permission request (30 seconds for Google Fit OAuth)
+      const timeoutDuration = Platform.OS === 'android' ? 35000 : 10000; // 35s for Android, 10s for iOS
+      
+      const hasPermission = await Promise.race([
+        healthSyncService.requestPermissions(),
+        new Promise<boolean>((_, reject) =>
+          setTimeout(() => reject(new Error('Health permission request timeout')), timeoutDuration)
+        )
+      ]).catch((error) => {
+        console.warn('Health permission request timeout or error:', error);
+        return false;
+      });
+
       if (!hasPermission) {
         console.warn('Health permissions not granted, skipping gap fill');
+        if (Platform.OS === 'android') {
+          console.log('💡 User should grant Google Fit permissions to enable health data sync');
+        }
         return;
       }
 
@@ -131,13 +179,25 @@ class BackgroundTrackingService {
       const startDate = new Date(session.startAt);
       const now = new Date();
 
-      if (Platform.OS === 'ios') {
-        // Read HealthKit data for the gap period
-        await this.readHealthKitGapData(session, startDate, now);
-      } else if (Platform.OS === 'android') {
-        // Read Google Fit data for the gap period
-        await this.readGoogleFitGapData(session, startDate, now);
-      }
+      console.log(`📊 Attempting to read health data from ${startDate.toISOString()} to ${now.toISOString()}`);
+
+      // Add longer timeout for health data read (20 seconds)
+      await Promise.race([
+        (async () => {
+          if (Platform.OS === 'ios') {
+            // Read HealthKit data for the gap period
+            await this.readHealthKitGapData(session, startDate, now);
+          } else if (Platform.OS === 'android') {
+            // Read Google Fit data for the gap period
+            await this.readGoogleFitGapData(session, startDate, now);
+          }
+        })(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Health data read timeout')), 20000)
+        )
+      ]).catch((error) => {
+        console.warn('Health data read timeout or error:', error);
+      });
     } catch (error) {
       console.error('Failed to fill gap with health data:', error);
       // Don't throw - this is a best-effort operation
@@ -222,46 +282,10 @@ class BackgroundTrackingService {
   }
 
   /**
-   * Handle sensor data from background service
-   */
-  private handleSensorData(data: { magnitude: number; timestamp: number }): void {
-    // Buffer sensor data
-    this.sensorDataBuffer.push(data);
-
-    // If buffer gets too large, flush it
-    if (this.sensorDataBuffer.length > 100) {
-      this.flushSensorData();
-    }
-  }
-
-  /**
-   * Flush buffered sensor data to storage
-   */
-  private async flushSensorData(): Promise<void> {
-    if (this.sensorDataBuffer.length === 0) {
-      return;
-    }
-
-    try {
-      // Store sensor data for current session
-      // This would be stored in SQLite or sent to backend
-      const data = [...this.sensorDataBuffer];
-      this.sensorDataBuffer = [];
-
-      console.log(`Flushed ${data.length} sensor data points`);
-      // Implementation to save data would go here
-    } catch (error) {
-      console.error('Failed to flush sensor data:', error);
-    }
-  }
-
-  /**
    * Cleanup
    */
   cleanup(): void {
-    if (this.eventEmitter) {
-      this.eventEmitter.removeAllListeners('BackgroundSensorData');
-    }
+    // No event listeners to clean up - native service writes directly to database
   }
 }
 

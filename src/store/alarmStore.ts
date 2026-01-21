@@ -4,8 +4,8 @@
  */
 
 import { create } from 'zustand';
-import { AlarmConfig, UUID } from '@/models';
-import { alarmService } from '@/services/alarmService';
+import { AlarmConfig, UUID } from '../models';
+import { alarmService } from '../services/alarmService';
 
 interface AlarmState {
   alarms: AlarmConfig[];

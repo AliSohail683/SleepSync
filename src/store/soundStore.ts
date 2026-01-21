@@ -4,8 +4,8 @@
  */
 
 import { create } from 'zustand';
-import { SoundProfile, UUID } from '@/models';
-import { soundService } from '@/services/soundService';
+import { SoundProfile, UUID } from '../models';
+import { soundService } from '../services/soundService';
 
 interface SoundState {
   profiles: SoundProfile[];

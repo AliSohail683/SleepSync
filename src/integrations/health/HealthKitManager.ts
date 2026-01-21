@@ -244,10 +244,75 @@ class HealthKitManager {
   }
 
   /**
-   * Check authorization status
+   * Check authorization status (in-memory flag)
    */
   isHealthKitAuthorized(): boolean {
     return this.isAuthorized;
+  }
+
+  /**
+   * Check actual authorization status from HealthKit
+   * This attempts to read data to verify we have permission
+   * Includes timeout to prevent hanging
+   */
+  async checkAuthorizationStatus(): Promise<boolean> {
+    if (Platform.OS !== 'ios' || !AppleHealthKit) {
+      return false;
+    }
+
+    try {
+      // Try to read sleep samples to check if we have permission
+      // This is the most reliable way to check HealthKit authorization
+      const options = {
+        startDate: new Date(Date.now() - 86400000).toISOString(), // 24 hours ago
+        endDate: new Date().toISOString(),
+      };
+
+      return await Promise.race([
+        new Promise<boolean>((resolve) => {
+          AppleHealthKit.getSleepSamples(options, (error: any, results: any[]) => {
+            if (error) {
+              // Check if error is permission-related
+              const errorMessage = error.message || error.toString() || '';
+              const isPermissionError =
+                errorMessage.includes('authorization') ||
+                errorMessage.includes('permission') ||
+                errorMessage.includes('not authorized') ||
+                error.code === 'E_AUTHORIZATION';
+
+              if (isPermissionError) {
+                this.isAuthorized = false;
+                resolve(false);
+              } else {
+                // Other errors (like no data) might mean we have permission but no data
+                // In this case, we assume we have permission
+                this.isAuthorized = true;
+                resolve(true);
+              }
+            } else {
+              // Successfully read (even if empty array) means we have permission
+              this.isAuthorized = true;
+              resolve(true);
+            }
+          });
+        }),
+        new Promise<boolean>((_, reject) =>
+          setTimeout(() => {
+            console.warn('HealthKit authorization check timeout');
+            this.isAuthorized = false;
+            reject(new Error('HealthKit authorization check timeout'));
+          }, 5000)
+        )
+      ]).catch((error) => {
+        console.warn('HealthKit authorization check failed:', error);
+        this.isAuthorized = false;
+        return false;
+      });
+    } catch (error) {
+      console.error('Failed to check HealthKit authorization:', error);
+      this.isAuthorized = false;
+      return false;
+    }
   }
 }
 

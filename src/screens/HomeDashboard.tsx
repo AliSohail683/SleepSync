@@ -3,7 +3,7 @@
  * Main screen showing sleep stats, quick actions, and insights
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { GradientBackground, Card, AnimatedSleepScore, Button, LoadingSpinner } from '../components';
@@ -12,42 +12,131 @@ import { useUserStore } from '../store/userStore';
 import { useSleepStore } from '../store/sleepStore';
 import { useSubscriptionStore } from '../store/subscriptionStore';
 import { formatDuration } from '../utils/dateUtils';
+import { useAlarmStore } from '../store/alarmStore';
+import { storageService } from '../services/storageService';
+import { calculateCumulativeDebt } from '../utils/sleepUtils';
+import { useProtocolStore } from '../store/protocolStore';
 
 interface HomeDashboardProps {
   onStartSession: () => void;
   onViewInsights: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (alarmId?: string) => void;
+  onOpenHistory?: () => void;
+  onOpenProtocol?: () => void;
 }
 
 export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   onStartSession,
   onViewInsights,
   onOpenSettings,
+  onOpenHistory,
+  onOpenProtocol,
 }) => {
   const { profile } = useUserStore();
   const { currentSession, recentSessions, insights, loadRecentSessions, loadInsights } = useSleepStore();
   const { hasActiveSubscription } = useSubscriptionStore();
+  const { alarms, loadAlarms, toggleAlarm } = useAlarmStore();
+  const { activeProtocol, startProtocol } = useProtocolStore();
   
   const isPremium = hasActiveSubscription();
-  const [stats, setStats] = React.useState({
+  const [stats, setStats] = useState({
     averageDuration: 0,
     averageScore: 0,
     totalSessions: 0,
     consistency: 0,
   });
+  const [sleepDebtHours, setSleepDebtHours] = useState<number | null>(null);
+  const [isPlanLoading, setIsPlanLoading] = useState(false);
+
+  const primaryAlarm = useMemo(
+    () => alarms.find(a => a.enabled) || alarms[0],
+    [alarms]
+  );
+
+  const tonightPlan = useMemo(() => {
+    if (!profile) {
+      return null;
+    }
+
+    const targetWake = profile.averageWakeTime || '07:00';
+    const sleepGoal = profile.sleepGoalHours || 8;
+
+    // Derive bedtime from wake time and goal
+    const [wakeH, wakeM] = targetWake.split(':').map(Number);
+    const wakeTotal = wakeH * 60 + wakeM;
+    const bedtimeMinutes = wakeTotal - Math.round(sleepGoal * 60);
+    const normalized = bedtimeMinutes < 0 ? bedtimeMinutes + 24 * 60 : bedtimeMinutes;
+    const bedH = Math.floor(normalized / 60);
+    const bedM = normalized % 60;
+    const targetBed = `${String(bedH).padStart(2, '0')}:${String(bedM).padStart(2, '0')}`;
+
+    const debt = sleepDebtHours ?? 0;
+    let headline: string;
+    if (debt >= 14) {
+      headline = 'You are running on heavy sleep debt. Tonight is a recovery night.';
+    } else if (debt >= 7) {
+      headline = 'You are behind on sleep. Let’s claw back some hours tonight.';
+    } else if (debt > 0.5) {
+      headline = 'Mild sleep debt. Staying consistent will flip this.';
+    } else {
+      headline = 'You’re close to your target. Protect this rhythm.';
+    }
+
+    const microActions: string[] = [];
+    if (debt >= 7) {
+      microActions.push('Aim to be in bed by the target time, not just starting wind-down.');
+      microActions.push('Avoid caffeine after 6 hours before bedtime.');
+    } else {
+      microActions.push('Keep bedtime within 30 minutes of your target.');
+      microActions.push('Dim screens 30–45 minutes before bed.');
+    }
+
+    return {
+      targetBedtime: targetBed,
+      targetWakeTime: targetWake,
+      headline,
+      microActions,
+    };
+  }, [profile, sleepDebtHours]);
 
   useEffect(() => {
     if (profile) {
       loadRecentSessions(profile.id);
       loadInsights(profile.id);
+      loadAlarms(profile.id).catch((err) => console.warn('Failed to load alarms', err));
     }
-  }, [profile, loadRecentSessions, loadInsights]);
+  }, [profile, loadRecentSessions, loadInsights, loadAlarms]);
 
   useEffect(() => {
     if (recentSessions.length > 0) {
       calculateStats();
     }
   }, [recentSessions]);
+
+  useEffect(() => {
+    const loadDebt = async () => {
+      if (!profile) return;
+      setIsPlanLoading(true);
+      try {
+        if (!storageService.isInitialized()) {
+          await storageService.setupDB();
+        }
+        const records = await storageService.getSleepDebtRecords(7);
+        if (records.length === 0) {
+          setSleepDebtHours(0);
+        } else {
+          setSleepDebtHours(calculateCumulativeDebt(records));
+        }
+      } catch (error) {
+        console.warn('Failed to load sleep debt records:', error);
+        setSleepDebtHours(null);
+      } finally {
+        setIsPlanLoading(false);
+      }
+    };
+
+    loadDebt();
+  }, [profile, recentSessions]);
 
   const calculateStats = React.useCallback(() => {
     if (recentSessions.length > 0) {
@@ -108,10 +197,67 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               <Text style={styles.greeting}>Good {getTimeOfDay()}</Text>
               <Text style={styles.userName}>Ready for better sleep?</Text>
             </View>
-            <TouchableOpacity onPress={onOpenSettings}>
+            <TouchableOpacity onPress={() => onOpenSettings()}>
               <Text style={styles.settingsIcon}>⚙️</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Tonight & Tomorrow Plan */}
+          {tonightPlan && (
+            <Card gradient style={styles.planCard}>
+              <Text style={styles.planTitle}>Tonight & Tomorrow</Text>
+              <View style={styles.planRow}>
+                <View style={styles.planColumn}>
+                  <Text style={styles.planLabel}>Tonight's Target Bedtime</Text>
+                  <Text style={styles.planValue}>{tonightPlan.targetBedtime}</Text>
+                </View>
+                <View style={styles.planColumn}>
+                  <Text style={styles.planLabel}>Tomorrow's Wake</Text>
+                  <Text style={styles.planValue}>{tonightPlan.targetWakeTime}</Text>
+                </View>
+              </View>
+              <View style={styles.debtRow}>
+                <Text style={styles.debtLabel}>
+                  Sleep Debt (last 7 days):
+                </Text>
+                <View style={styles.debtBadgeContainer}>
+                  {sleepDebtHours === null ? (
+                    <Text style={styles.debtValue}>
+                      {isPlanLoading ? 'Calculating...' : 'N/A'}
+                    </Text>
+                  ) : (
+                    <>
+                      <Text
+                        style={[
+                          styles.debtBadge,
+                          sleepDebtHours >= 14 && styles.debtBadgeHigh,
+                          sleepDebtHours >= 7 && sleepDebtHours < 14 && styles.debtBadgeMedium,
+                          sleepDebtHours < 7 && styles.debtBadgeLow,
+                        ]}
+                      >
+                        {sleepDebtHours >= 14
+                          ? 'HIGH'
+                          : sleepDebtHours >= 7
+                          ? 'MEDIUM'
+                          : 'LOW'}
+                      </Text>
+                      <Text style={styles.debtValue}>
+                        {sleepDebtHours.toFixed(1)}h
+                      </Text>
+                    </>
+                  )}
+                </View>
+              </View>
+              <Text style={styles.planHeadline}>{tonightPlan.headline}</Text>
+              <View style={styles.planActions}>
+                {tonightPlan.microActions.map((action, index) => (
+                  <Text key={index} style={styles.planActionItem}>
+                    • {action}
+                  </Text>
+                ))}
+              </View>
+            </Card>
+          )}
 
           {/* Sleep Score Card */}
           {lastSession?.sleepScore && (
@@ -160,6 +306,52 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             )}
           </View>
 
+          {/* Alarm Overview */}
+          {primaryAlarm ? (
+            <Card style={styles.alarmCard}>
+              <View style={styles.alarmHeader}>
+                <Text style={styles.alarmTitle}>Smart Wake Window</Text>
+                <TouchableOpacity
+                  onPress={() => toggleAlarm(primaryAlarm.id).catch(err => console.warn('Failed to toggle alarm', err))}
+                >
+                  <Text style={styles.alarmToggle}>
+                    {primaryAlarm.enabled ? 'On' : 'Off'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.alarmTime}>
+                {primaryAlarm.targetWindowStart} – {primaryAlarm.targetWindowEnd}
+              </Text>
+              <Text style={styles.alarmSubtitle}>
+                Wake during your lightest sleep in this window.
+              </Text>
+              <Button
+                title="Edit Schedule"
+                size="small"
+                variant="ghost"
+                onPress={() => {
+                  onOpenSettings(primaryAlarm.id);
+                }}
+                style={styles.alarmEditButton}
+              />
+            </Card>
+          ) : (
+            <Card style={styles.alarmCard}>
+              <Text style={styles.alarmTitle}>Smart Wake Window</Text>
+              <Text style={styles.alarmSubtitle}>
+                Set up a smart alarm to wake you during your lightest sleep phase.
+              </Text>
+              <Button
+                title="Create Alarm"
+                size="medium"
+                onPress={() => {
+                  onOpenSettings();
+                }}
+                style={styles.alarmEditButton}
+              />
+            </Card>
+          )}
+
           {/* Stats Overview */}
           <View style={styles.statsGrid}>
             <StatCard
@@ -183,6 +375,46 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               value={stats.totalSessions.toString()}
             />
           </View>
+
+          {/* Protocol CTA */}
+          <Card style={styles.protocolCard}>
+            <View style={styles.protocolHeader}>
+              <Text style={styles.protocolTitle}>
+                {activeProtocol ? 'Kill the Zombie Mornings' : 'Start Kill the Zombie Mornings'}
+              </Text>
+              {activeProtocol && (
+                <Text style={styles.protocolBadge}>
+                  Day {activeProtocol.currentDay}
+                </Text>
+              )}
+            </View>
+            <Text style={styles.protocolDescription}>
+              Lock in a consistent wake time over 7 days to stop feeling wrecked in the morning.
+            </Text>
+            <View style={styles.protocolActions}>
+              {!activeProtocol ? (
+                <Button
+                  title="Start 7-Day Reset"
+                  size="medium"
+                  onPress={() => startProtocol('kill-zombie-mornings', profile.id)}
+                />
+              ) : (
+                <Button
+                  title="View Today’s Plan"
+                  size="medium"
+                  onPress={onOpenProtocol!}
+                />
+              )}
+              {onOpenHistory && (
+                <Button
+                  title="View History"
+                  size="medium"
+                  variant="ghost"
+                  onPress={onOpenHistory}
+                />
+              )}
+            </View>
+          </Card>
 
           {/* Insights */}
           {insights.length > 0 && (
@@ -445,6 +677,148 @@ const styles = StyleSheet.create({
   },
   premiumButton: {
     minWidth: 180,
+  },
+  protocolCard: {
+    marginTop: spacing.lg,
+  },
+  protocolHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  protocolTitle: {
+    fontSize: typography.sizes.lg,
+    fontWeight: typography.weights.semiBold,
+    color: colors.text.primary,
+  },
+  protocolBadge: {
+    fontSize: typography.sizes.sm,
+    color: colors.primary.light,
+    fontWeight: typography.weights.medium,
+  },
+  protocolDescription: {
+    fontSize: typography.sizes.sm,
+    color: colors.text.secondary,
+    marginBottom: spacing.md,
+  },
+  protocolActions: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    alignItems: 'center',
+  },
+  planCard: {
+    marginBottom: spacing.lg,
+  },
+  planTitle: {
+    fontSize: typography.sizes.lg,
+    fontWeight: typography.weights.semiBold,
+    color: colors.text.primary,
+    marginBottom: spacing.md,
+  },
+  planRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
+    gap: spacing.lg,
+  },
+  planColumn: {
+    flex: 1,
+  },
+  planLabel: {
+    fontSize: typography.sizes.sm,
+    color: colors.text.tertiary,
+    marginBottom: spacing.xs,
+  },
+  planValue: {
+    fontSize: typography.sizes['2xl'],
+    fontWeight: typography.weights.bold,
+    color: colors.text.primary,
+  },
+  debtRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  debtLabel: {
+    fontSize: typography.sizes.sm,
+    color: colors.text.secondary,
+  },
+  debtValue: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.semiBold,
+    color: colors.primary.light,
+  },
+  planHeadline: {
+    fontSize: typography.sizes.base,
+    color: colors.text.primary,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  planActions: {
+    gap: spacing.xs,
+  },
+  planActionItem: {
+    fontSize: typography.sizes.sm,
+    color: colors.text.secondary,
+  },
+  alarmCard: {
+    marginBottom: spacing.lg,
+  },
+  alarmHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  alarmTitle: {
+    fontSize: typography.sizes.base,
+    fontWeight: typography.weights.semiBold,
+    color: colors.text.primary,
+  },
+  alarmToggle: {
+    fontSize: typography.sizes.sm,
+    color: colors.primary.light,
+    fontWeight: typography.weights.medium,
+  },
+  alarmTime: {
+    fontSize: typography.sizes['2xl'],
+    fontWeight: typography.weights.bold,
+    color: colors.text.primary,
+    marginBottom: spacing.xs,
+  },
+  alarmSubtitle: {
+    fontSize: typography.sizes.sm,
+    color: colors.text.secondary,
+  },
+  alarmEditButton: {
+    marginTop: spacing.sm,
+  },
+  debtBadgeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  debtBadge: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs / 2,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  debtBadgeLow: {
+    backgroundColor: colors.primary.light + '40',
+    color: colors.primary.light,
+  },
+  debtBadgeMedium: {
+    backgroundColor: '#F9C74F40',
+    color: '#F9C74F',
+  },
+  debtBadgeHigh: {
+    backgroundColor: '#F8717140',
+    color: '#F87171',
   },
 });
 
